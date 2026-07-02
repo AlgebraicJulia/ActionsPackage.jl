@@ -52,6 +52,7 @@ jobs:
       - name: "🔄 Resolve Dynamic Library Manifest"
         run: |
           echo "Resolving local environment against upstream package registries..."
+          module load julia
           julia --project=. -e "using Pkg; Pkg.resolve()"
 
       - name: "🔑 Compute Cache Keys and Paths"
@@ -80,8 +81,9 @@ jobs:
                  --time=00:20:00 \
                  --job-name="gha-sysimg-compile" \
                  bash -c "
-                    export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
-                    julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$SYSIMAGE_PATH'
+                     module load julia
+                     export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
+                     julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$SYSIMAGE_PATH'
                  "
           else
             echo "✅ Cache Hit: Reusing optimized binary blob sitting on storage tier"
@@ -97,6 +99,7 @@ jobs:
                --time=00:30:00 \
                --job-name="gha-cluster-test" \
                bash -c "
+                  module load julia
                   export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
                   julia -J '$SYSIMAGE_PATH' --project=. test/runtests.jl
                "
