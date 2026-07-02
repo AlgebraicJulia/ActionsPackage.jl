@@ -35,15 +35,77 @@ permissions:
   security-events: read
   statuses: read
 
+# ⚙️ CENTRALIZED PATH MANAGEMENT
+env:
+  HPC_SYSIMAGE_DIR: "/privapps/fairbanksj/blue-simulator/github/sysimages"
+  HPC_SCRIPT_DIR: ".github/scripts"
+
 jobs:
   CI:
     if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'test')
-    uses: AlgebraicJulia/.github/.github/workflows/julia_ci.yml@main
-    secrets: inherit
+    runs-on: [self-hosted, hpc-gpu]
+    
+    steps:
+      - name: "🗂️ Checkout Repository"
+        uses: actions/checkout@v4
+
+      - name: "🔄 Resolve Dynamic Library Manifest"
+        run: |
+          echo "Resolving local environment against upstream package registries..."
+          julia --project=. -e "using Pkg; Pkg.resolve()"
+
+      - name: "🔑 Compute Cache Keys and Paths"
+        id: cache-setup
+        run: |
+          set -x
+          # Hash the resolved Manifest to establish a deterministic cache key
+          MANIFEST_HASH=$(sha256sum Manifest.toml | awk '{print $1}')
+          
+          # Clean native Bash string concatenation using your global variable
+          SYSIMAGE_PATH="$HPC_SYSIMAGE_DIR/sysimage-${MANIFEST_HASH}.so"
+          
+          # Inject it into the environment for subsequent steps
+          echo "SYSIMAGE_PATH=$SYSIMAGE_PATH" >> $GITHUB_ENV
+
+      - name: "🛠️ System Image Cache Validation"
+        run: |
+          set -x
+          # Both variables are now standard, native environment variables
+          if [ ! -f "$SYSIMAGE_PATH" ]; then
+            echo "❌ Cache Miss: Launching pre-compilation routine"
+            mkdir -p "$HPC_SYSIMAGE_DIR"
+            
+            srun --partition=gpu \
+                 --gpus=1 \
+                 --time=00:20:00 \
+                 --job-name="gha-sysimg-compile" \
+                 bash -c "
+                    export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
+                    julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$SYSIMAGE_PATH'
+                 "
+          else
+            echo "✅ Cache Hit: Reusing optimized binary blob sitting on storage tier"
+          fi
+
+      - name: "🚀 Execute Test Suite via Slurm Local NVMe"
+        run: |
+          set -x
+          echo "Launching parallelized validation payload..."
+          
+          srun --partition=gpu \
+               --gpus=1 \
+               --time=00:30:00 \
+               --job-name="gha-cluster-test" \
+               bash -c "
+                  export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
+                  julia -J '$SYSIMAGE_PATH' --project=. test/runtests.jl
+               "
+
   CompatHelper:
     if: github.event_name == 'schedule'
     uses: AlgebraicJulia/.github/.github/workflows/julia_compat.yml@main
     secrets: inherit
+
   Release:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'release' && inputs.version != ''
     uses: AlgebraicJulia/.github/.github/workflows/julia_release.yml@main
