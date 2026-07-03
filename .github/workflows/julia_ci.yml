@@ -64,7 +64,7 @@ jobs:
           echo "Resolving local environment against upstream package registries..."
           source /etc/profile.d/modules.sh
           module load julia
-          julia --project=. -e 'using Pkg; isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General"); Pkg.resolve()'
+          julia --project=. -e 'using Pkg; Pkg.resolve()'
 
       - name: "🔑 Compute Cache Keys and Paths"
         id: cache-setup
@@ -107,7 +107,7 @@ jobs:
                      export JULIA_DEPOT_PATH=$TEMP_DEPOT
                      mkdir -p $TEMP_DEPOT
                      cd $WORK_SHARED
-                     julia -e 'using Pkg; Pkg.Registry.add(\"General\"); Pkg.add(\"PackageCompiler\")'
+                     julia -e 'using Pkg; Pkg.add(\"PackageCompiler\")'
                      julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$TEMP_SYSIMAGE'
                  "
             
