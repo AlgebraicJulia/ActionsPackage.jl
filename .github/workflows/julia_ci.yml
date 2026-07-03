@@ -39,6 +39,12 @@ permissions:
 # NOTE: paths live on /blue, which is mounted on the compute nodes where the
 # srun jobs run. The runner checks out to /privapps, which is NOT exported to
 # compute nodes, so the checkout is staged onto /blue before each srun.
+#
+# CACHING STRATEGY:
+# We use a global system image and depot cache keyed by the Manifest.toml hash.
+# To prevent race conditions when multiple runners build the same manifest
+# simultaneously, we build into temporary run-id-scoped paths and then 
+# atomically move (promote) the results to the final shared location.
 env:
   HPC_SYSIMAGE_DIR: "/blue/fairbanksj/gha/sysimages"
   HPC_SHARED_WORK: "/blue/fairbanksj/gha/work"
@@ -64,14 +70,14 @@ jobs:
         id: cache-setup
         run: |
           set -x
-          # Hash the resolved Manifest to establish a deterministic cache key
           MANIFEST_HASH=$(sha256sum Manifest.toml | awk '{print $1}')
           
-          # Clean native Bash string concatenation using your global variable
           SYSIMAGE_PATH="$HPC_SYSIMAGE_DIR/sysimage-${MANIFEST_HASH}.so"
+          # Scope the depot only by manifest so all runners can share the same cache
+          DEPOT_PATH="$HPC_SYSIMAGE_DIR/depots/$MANIFEST_HASH"
           
-          # Inject it into the environment for subsequent steps
           echo "SYSIMAGE_PATH=$SYSIMAGE_PATH" >> $GITHUB_ENV
+          echo "DEPOT_PATH=$DEPOT_PATH" >> $GITHUB_ENV
 
       - name: "🛠️ System Image Cache Validation"
         run: |
@@ -81,10 +87,14 @@ jobs:
           WORK_SHARED="$HPC_SHARED_WORK/$GITHUB_RUN_ID"
           mkdir -p "$WORK_SHARED"
           rsync -a --delete "$GITHUB_WORKSPACE/" "$WORK_SHARED/"
-          # Both variables are now standard, native environment variables
+          
           if [ ! -f "$SYSIMAGE_PATH" ]; then
             echo "❌ Cache Miss: Launching pre-compilation routine"
-            mkdir -p "$HPC_SYSIMAGE_DIR"
+            
+            # Use temporary paths to prevent race conditions between concurrent runners
+            TEMP_DEPOT="$HPC_SYSIMAGE_DIR/depots/tmp_$GITHUB_RUN_ID"
+            TEMP_SYSIMAGE="$HPC_SYSIMAGE_DIR/tmp_sysimage_$GITHUB_RUN_ID.so"
+            mkdir -p "$HPC_SYSIMAGE_DIR/depots"
 
             srun --partition=hpg-dev \
             --time=00:20:00 \
@@ -93,13 +103,26 @@ jobs:
                  bash -c "
                      source /etc/profile.d/modules.sh
                      module load julia
-                     export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
+                     export JULIA_DEPOT_PATH=$TEMP_DEPOT
+                     mkdir -p $TEMP_DEPOT
                      cd $WORK_SHARED
                      julia -e 'using Pkg; Pkg.Registry.add(\"General\"); Pkg.add(\"PackageCompiler\")'
-                     julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$SYSIMAGE_PATH'
+                     julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$TEMP_SYSIMAGE'
                  "
+            
+            # Atomic Promotion: ensure the build is complete before exposing it to other runners
+            echo "Promoting build to shared cache..."
+            # SAFETY: Target must be a specific sub-path in the GHA depot directory
+            # Must match: /blue/fairbanksj/gha/sysimages/depots/<hash>
+            if [[ -n "$DEPOT_PATH" && "$DEPOT_PATH" =~ ^/blue/fairbanksj/gha/sysimages/depots/[a-f0-9]{64}$ ]]; then
+              rm -rf "$DEPOT_PATH"
+            else
+              echo "❌ SAFETY ERROR: Path '$DEPOT_PATH' does not match the strict depot pattern. Aborting to protect /blue/fairbanksj/" && exit 1
+            fi
+            mv "$TEMP_DEPOT" "$DEPOT_PATH"
+            mv "$TEMP_SYSIMAGE" "$SYSIMAGE_PATH"
           else
-            echo "✅ Cache Hit: Reusing optimized binary blob sitting on storage tier"
+            echo "✅ Cache Hit: Reusing optimized binary blob and depot"
           fi
 
       - name: "🚀 Execute Test Suite via Slurm"
@@ -115,7 +138,8 @@ jobs:
                bash -c "
                   source /etc/profile.d/modules.sh
                   module load julia
-                  export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
+                  export JULIA_DEPOT_PATH=$DEPOT_PATH:\$SLURM_TMPDIR/.julia
+                  mkdir -p \$SLURM_TMPDIR/.julia
                   cd $WORK_SHARED
                   julia -e 'using Pkg; Pkg.Registry.add(\"General\")'
                   julia -J '$SYSIMAGE_PATH' --project=. -e 'using Pkg; Pkg.test()'
@@ -123,7 +147,15 @@ jobs:
 
       - name: "🧹 Clean Up Staged Workspace"
         if: always()
-        run: rm -rf "$HPC_SHARED_WORK/$GITHUB_RUN_ID"
+        run: |
+          TARGET_CLEAN="$HPC_SHARED_WORK/$GITHUB_RUN_ID"
+          # SAFETY: Target must be a specific run ID directory inside the GHA work directory
+          # Must match: /blue/fairbanksj/gha/work/<run_id>
+          if [[ -n "$TARGET_CLEAN" && "$TARGET_CLEAN" =~ ^/blue/fairbanksj/gha/work/[0-9]+$ ]]; then
+            rm -rf "$TARGET_CLEAN"
+          else
+            echo "❌ SAFETY ERROR: Path '$TARGET_CLEAN' does not match the strict workspace pattern. Aborting to protect /blue/fairbanksj/" && exit 1
+          fi
 
   CompatHelper:
     if: github.event_name == 'schedule'
