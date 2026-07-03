@@ -86,7 +86,7 @@ jobs:
             echo "❌ Cache Miss: Launching pre-compilation routine"
             mkdir -p "$HPC_SYSIMAGE_DIR"
 
-            srun --partition=hpg-b200 \
+            srun --partition=hpg-dev \
                  --gpus=1 \
                  --cpus-per-task=8 \
                  --job-name="gha-sysimg-compile" \
@@ -109,7 +109,7 @@ jobs:
           WORK_SHARED="$HPC_SHARED_WORK/$GITHUB_RUN_ID"
           echo "Launching parallelized validation payload..."
 
-          srun --partition=hpg-b200 \
+          srun --partition=hpg-dev \
                --gpus=1 \
                --cpus-per-task=8 \
                --job-name="gha-cluster-test" \
