@@ -110,7 +110,6 @@ jobs:
           echo "Launching parallelized validation payload..."
 
           srun --partition=hpg-dev \
-               # --gpus=1 \
                --cpus-per-task=8 \
                --job-name="gha-cluster-test" \
                bash -c "
