@@ -118,6 +118,7 @@ jobs:
                   module load julia
                   export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
                   cd $WORK_SHARED
+                  julia -e 'using Pkg; Pkg.Registry.add(\"General\")'
                   julia -J '$SYSIMAGE_PATH' --project=. -e 'using Pkg; Pkg.test()'
                "
 
