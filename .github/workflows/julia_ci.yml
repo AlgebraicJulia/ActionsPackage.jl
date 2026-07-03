@@ -88,8 +88,9 @@ jobs:
           mkdir -p "$WORK_SHARED"
           rsync -a --delete "$GITHUB_WORKSPACE/" "$WORK_SHARED/"
           
-          if [ ! -f "$SYSIMAGE_PATH" ]; then
-            echo "❌ Cache Miss: Launching pre-compilation routine"
+          # A valid cache hit requires BOTH the binary system image AND the artifact depot
+          if [ ! -f "$SYSIMAGE_PATH" ] || [ ! -d "$DEPOT_PATH" ]; then
+            echo "❌ Cache Miss: System image or depot missing. Launching pre-compilation routine"
             
             # Use temporary paths to prevent race conditions between concurrent runners
             TEMP_DEPOT="$HPC_SYSIMAGE_DIR/depots/tmp_$GITHUB_RUN_ID"
@@ -122,7 +123,7 @@ jobs:
             mv "$TEMP_DEPOT" "$DEPOT_PATH"
             mv "$TEMP_SYSIMAGE" "$SYSIMAGE_PATH"
           else
-            echo "✅ Cache Hit: Reusing optimized binary blob and depot"
+            echo "✅ Cache Hit: Both optimized binary blob and artifact depot found"
           fi
 
       - name: "🚀 Execute Test Suite via Slurm"
