@@ -36,8 +36,12 @@ permissions:
   statuses: read
 
 # ⚙️ CENTRALIZED PATH MANAGEMENT
+# NOTE: paths live on /blue, which is mounted on the compute nodes where the
+# srun jobs run. The runner checks out to /privapps, which is NOT exported to
+# compute nodes, so the checkout is staged onto /blue before each srun.
 env:
-  HPC_SYSIMAGE_DIR: "/privapps/fairbanksj/blue-simulator/github/sysimages"
+  HPC_SYSIMAGE_DIR: "/blue/fairbanksj/gha/sysimages"
+  HPC_SHARED_WORK: "/blue/fairbanksj/gha/work"
   HPC_SCRIPT_DIR: ".github/scripts"
 
 jobs:
@@ -52,8 +56,9 @@ jobs:
       - name: "🔄 Resolve Dynamic Library Manifest"
         run: |
           echo "Resolving local environment against upstream package registries..."
+          source /etc/profile.d/modules.sh
           module load julia
-          julia --project=. -e "using Pkg; Pkg.resolve()"
+          julia --project=. -e 'using Pkg; isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General"); Pkg.resolve()'
 
       - name: "🔑 Compute Cache Keys and Paths"
         id: cache-setup
@@ -71,18 +76,26 @@ jobs:
       - name: "🛠️ System Image Cache Validation"
         run: |
           set -x
+          source /etc/profile.d/slurm.sh
+          # Stage the checkout onto /blue so compute nodes can read it.
+          WORK_SHARED="$HPC_SHARED_WORK/$GITHUB_RUN_ID"
+          mkdir -p "$WORK_SHARED"
+          rsync -a --delete "$GITHUB_WORKSPACE/" "$WORK_SHARED/"
           # Both variables are now standard, native environment variables
           if [ ! -f "$SYSIMAGE_PATH" ]; then
             echo "❌ Cache Miss: Launching pre-compilation routine"
             mkdir -p "$HPC_SYSIMAGE_DIR"
-            
-            srun --partition=gpu \
+
+            srun --partition=hpg-b200 \
                  --gpus=1 \
-                 --time=00:20:00 \
+                 --cpus-per-task=8 \
                  --job-name="gha-sysimg-compile" \
                  bash -c "
+                     source /etc/profile.d/modules.sh
                      module load julia
                      export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
+                     cd $WORK_SHARED
+                     julia -e 'using Pkg; Pkg.Registry.add(\"General\"); Pkg.add(\"PackageCompiler\")'
                      julia --project=. $HPC_SCRIPT_DIR/compile_sysimage.jl '$SYSIMAGE_PATH'
                  "
           else
@@ -92,17 +105,27 @@ jobs:
       - name: "🚀 Execute Test Suite via Slurm Local NVMe"
         run: |
           set -x
+          source /etc/profile.d/slurm.sh
+          WORK_SHARED="$HPC_SHARED_WORK/$GITHUB_RUN_ID"
           echo "Launching parallelized validation payload..."
-          
-          srun --partition=gpu \
+
+          srun --partition=hpg-b200 \
                --gpus=1 \
-               --time=00:30:00 \
+               --cpus-per-task=8 \
                --job-name="gha-cluster-test" \
                bash -c "
+                  source /etc/profile.d/modules.sh
                   module load julia
                   export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
-                  julia -J '$SYSIMAGE_PATH' --project=. test/runtests.jl
+                  cd $WORK_SHARED
+                  julia -e 'using Pkg; Pkg.Registry.add(\"General\")'
+                  julia --project=test -e 'using Pkg; Pkg.develop(path=\".\"); Pkg.instantiate()'
+                  julia -J '$SYSIMAGE_PATH' --project=test test/runtests.jl
                "
+
+      - name: "🧹 Clean Up Staged Workspace"
+        if: always()
+        run: rm -rf "$HPC_SHARED_WORK/$GITHUB_RUN_ID"
 
   CompatHelper:
     if: github.event_name == 'schedule'
