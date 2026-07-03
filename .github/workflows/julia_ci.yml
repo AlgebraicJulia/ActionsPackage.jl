@@ -43,7 +43,7 @@ permissions:
 # CACHING STRATEGY:
 # We use a global system image and depot cache keyed by the Manifest.toml hash.
 # To prevent race conditions when multiple runners build the same manifest
-# simultaneously, we build into temporary run-id-scoped paths and then 
+# simultaneously, we build into temporary run-id-scoped paths and then
 # atomically move (promote) the results to the final shared location.
 env:
   HPC_SYSIMAGE_DIR: "/blue/fairbanksj/gha/sysimages"
@@ -54,7 +54,7 @@ jobs:
   CI:
     if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'test')
     runs-on: [self-hosted, hpc-gpu]
-    
+
     steps:
       - name: "🗂️ Checkout Repository"
         uses: actions/checkout@v4
@@ -71,11 +71,11 @@ jobs:
         run: |
           set -x
           MANIFEST_HASH=$(sha256sum Manifest.toml | awk '{print $1}')
-          
+
           SYSIMAGE_PATH="$HPC_SYSIMAGE_DIR/sysimage-${MANIFEST_HASH}.so"
           # Scope the depot only by manifest so all runners can share the same cache
           DEPOT_PATH="$HPC_SYSIMAGE_DIR/depots/$MANIFEST_HASH"
-          
+
           echo "SYSIMAGE_PATH=$SYSIMAGE_PATH" >> $GITHUB_ENV
           echo "DEPOT_PATH=$DEPOT_PATH" >> $GITHUB_ENV
 
@@ -87,7 +87,7 @@ jobs:
           WORK_SHARED="$HPC_SHARED_WORK/$GITHUB_RUN_ID"
           mkdir -p "$WORK_SHARED"
           rsync -a --delete "$GITHUB_WORKSPACE/" "$WORK_SHARED/"
-          
+
           # A valid cache hit requires BOTH the binary system image AND the artifact depot
           if [ ! -f "$SYSIMAGE_PATH" ] || [ ! -d "$DEPOT_PATH" ]; then
             echo "❌ Cache Miss: System image or depot missing. Launching pre-compilation routine"
@@ -142,7 +142,6 @@ jobs:
                   export JULIA_DEPOT_PATH=$DEPOT_PATH:\$SLURM_TMPDIR/.julia
                   mkdir -p \$SLURM_TMPDIR/.julia
                   cd $WORK_SHARED
-                  julia -e 'using Pkg; Pkg.Registry.add(\"General\")'
                   julia -J '$SYSIMAGE_PATH' --project=. -e 'using Pkg; Pkg.test()'
                "
 
