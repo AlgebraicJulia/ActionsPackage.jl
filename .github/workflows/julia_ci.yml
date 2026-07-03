@@ -102,7 +102,7 @@ jobs:
             echo "✅ Cache Hit: Reusing optimized binary blob sitting on storage tier"
           fi
 
-      - name: "🚀 Execute Test Suite via Slurm Local NVMe"
+      - name: "🚀 Execute Test Suite via Slurm"
         run: |
           set -x
           source /etc/profile.d/slurm.sh
@@ -118,9 +118,7 @@ jobs:
                   module load julia
                   export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
                   cd $WORK_SHARED
-                  julia -e 'using Pkg; Pkg.Registry.add(\"General\")'
-                  julia --project=test -e 'using Pkg; Pkg.develop(path=\".\"); Pkg.instantiate()'
-                  julia -J '$SYSIMAGE_PATH' --project=test test/runtests.jl
+                  julia -J '$SYSIMAGE_PATH' --project=. -e 'using Pkg; Pkg.test()'
                "
 
       - name: "🧹 Clean Up Staged Workspace"
