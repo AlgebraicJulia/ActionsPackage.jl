@@ -118,7 +118,7 @@ jobs:
                   export JULIA_DEPOT_PATH=\$SLURM_TMPDIR/.julia
                   cd $WORK_SHARED
                   julia -e 'using Pkg; Pkg.Registry.add(\"General\")'
-                  julia -J '$SYSIMAGE_PATH' --project=. -e 'using Pkg; Pkg.test()'
+                  julia --project=. -e 'using Pkg; Pkg.test()'
                "
 
       - name: "🧹 Clean Up Staged Workspace"
